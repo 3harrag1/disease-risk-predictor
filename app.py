@@ -23,7 +23,7 @@ st.set_page_config(
 
 # NHS help links shown next to complex fields
 NHS_LINKS = {
-    "Glucose":                  "https://www.nhs.uk/conditions/blood-sugar-test/",
+    "Glucose":                  "https://www.nhs.uk/conditions/type-2-diabetes/getting-diagnosed/",
     "BloodPressure":            "https://www.nhs.uk/conditions/blood-pressure-test/",
     "Insulin":                  "https://www.nhs.uk/medicines/insulin/",
     "BMI":                      "https://www.nhs.uk/live-well/healthy-weight/bmi-calculator/",
@@ -31,21 +31,20 @@ NHS_LINKS = {
     "DiabetesPedigreeFunction": "https://www.nhs.uk/conditions/type-2-diabetes/",
     "chol":                     "https://www.nhs.uk/conditions/high-cholesterol/",
     "trestbps":                 "https://www.nhs.uk/conditions/blood-pressure-test/",
-    "thalach":                  "https://www.nhs.uk/live-well/exercise/physical-activity-guidelines-for-adults-aged-19-to-64/",
+    "thalach":                  "https://www.nhs.uk/conditions/electrocardiogram/",
     "oldpeak":                  "https://www.nhs.uk/conditions/electrocardiogram/",
     "restecg":                  "https://www.nhs.uk/conditions/electrocardiogram/",
     "thal":                     "https://www.nhs.uk/conditions/thalassaemia/",
     "ca":                       "https://www.nhs.uk/conditions/coronary-angiography/",
-    "avg_glucose_level":        "https://www.nhs.uk/conditions/blood-sugar-test/",
+    "avg_glucose_level":        "https://www.nhs.uk/conditions/type-2-diabetes/getting-diagnosed/",
     "hypertension":             "https://www.nhs.uk/conditions/high-blood-pressure-hypertension/",
     "smoking_status":           "https://www.nhs.uk/better-health/quit-smoking/",
 }
 
-# Each disease maps to its saved model files and the input fields shown to the user.
-# Field names must exactly match the column names used during model training.
-# Fields are ordered for a natural clinical intake flow rather than by dataset column order.
-# The model receives inputs ordered by feature_names loaded from the pkl file,
-# so visual reordering here has no effect on predictions.
+# Field names must exactly match column names used during model training.
+# Fields are ordered for a natural clinical intake flow. The model receives
+# inputs ordered by feature_names from the pkl file, so visual ordering here
+# has no effect on predictions.
 DISEASE_CONFIG = {
     "Diabetes": {
         "model":          "models/diabetes_best.pkl",
@@ -197,7 +196,7 @@ DISEASE_CONFIG = {
         "scaler":         "models/stroke_scaler.pkl",
         "background":     "models/stroke_background.pkl",
         "features":       "models/stroke_features.pkl",
-        "description": "Estimates the likelihood of stroke using demographic and clinical risk factors from the Kaggle Stroke Prediction dataset.",
+        "description":    "Estimates the likelihood of stroke using demographic and clinical risk factors from the Kaggle Stroke Prediction dataset.",
         "positive_label": "Stroke",
         "data_info": (
             "What you will need: most information here is demographic and lifestyle-based, which you will already know. "
@@ -262,9 +261,8 @@ DISEASE_CONFIG = {
 }
 
 
-# Load model files once per session and cache them.
-# Increment _version by 1 each time new pkl files are deployed
-# to force Streamlit to reload from disk rather than use the cached version.
+# Cache model artefacts per disease. Increment _version when new pkl files
+# are deployed to force a reload from disk.
 @st.cache_resource(show_spinner="Loading model...")
 def load_artefacts(disease_key: str, _version: int = 2):
     cfg = DISEASE_CONFIG[disease_key]
@@ -275,8 +273,8 @@ def load_artefacts(disease_key: str, _version: int = 2):
     return model, scaler, background, features
 
 
-# Render a single input field with a plain description and optional NHS link
 def render_field(field: dict):
+    """Render a single input widget with a plain-language caption and optional NHS link."""
     w     = field["widget"]
     label = field["label"]
     plain = field.get("plain", "")
@@ -314,17 +312,20 @@ def render_field(field: dict):
     raise ValueError(f"Unknown widget type: {w}")
 
 
-# Build a SHAP explanation for the positive class.
-# input_raw is passed separately so the waterfall chart and impact table
-# display the original user-entered values rather than the scaled equivalents.
-# Tested against SHAP 0.49.1 confirmed output shapes:
-#   LinearExplainer  -> sv: (1, n_features),    ev: scalar
-#   TreeExplainer    -> sv: (1, n_features, 2), ev: array shape (2,)
-#   KernelExplainer  -> sv: (1, n_features, 2), ev: array shape (2,)
 def get_shap_explanation(model, background_data, input_scaled: np.ndarray,
                           feature_names: list, input_raw: np.ndarray,
                           invert_shap: bool = False) -> shap.Explanation:
-    X = input_scaled  # shape (1, n_features)
+    """
+    Build a SHAP explanation for the positive class.
+    input_raw is passed separately so the waterfall chart displays original
+    user-entered values rather than scaled equivalents.
+
+    SHAP output shapes (confirmed against SHAP 0.49.1):
+      LinearExplainer  -> sv: (1, n_features),    ev: scalar
+      TreeExplainer    -> sv: (1, n_features, 2), ev: array shape (2,)
+      KernelExplainer  -> sv: (1, n_features, 2), ev: array shape (2,)
+    """
+    X = input_scaled
 
     if isinstance(model, (DecisionTreeClassifier, RandomForestClassifier)):
         explainer = shap.TreeExplainer(model)
@@ -346,10 +347,8 @@ def get_shap_explanation(model, background_data, input_scaled: np.ndarray,
         values     = sv[0, :, 1].astype(float)
         base_val   = float(np.array(explainer.expected_value)[1])
 
-    # The heart disease dataset encodes class 1 = no disease, so the predicted
-    # probability is inverted in the main block to display correct risk.
-    # SHAP values are negated here so feature directions remain consistent
-    # with the displayed risk score rather than the original model class.
+    # The heart disease dataset encodes class 1 = no disease, so SHAP values
+    # are negated to keep feature directions consistent with the displayed risk score.
     if invert_shap:
         values   = -values
         base_val = -base_val
@@ -362,8 +361,8 @@ def get_shap_explanation(model, background_data, input_scaled: np.ndarray,
     )
 
 
-# Render the SHAP waterfall chart and an impact table
 def render_shap_chart(explanation: shap.Explanation, disease_label: str):
+    """Render the SHAP waterfall chart and a sorted feature impact table."""
     st.subheader("Why did the model give this score?")
     st.caption(
         "The chart below shows which factors pushed your risk score up (red) "
@@ -395,7 +394,7 @@ def render_shap_chart(explanation: shap.Explanation, disease_label: str):
     st.dataframe(impact_df, width='stretch', hide_index=True)
 
 
-# ─── Main UI ─────────────────────────────────────────────────────────────────
+# ── Main UI ───────────────────────────────────────────────────────────────────
 
 st.title("Disease Risk Predictor")
 st.markdown(
@@ -417,7 +416,7 @@ st.markdown(f"_{cfg['description']}_")
 st.info(cfg["data_info"])
 st.divider()
 
-# Check all required model files exist
+# Check all required model files exist before proceeding
 missing_files = [p for p in [cfg["model"], cfg["scaler"],
                               cfg["background"], cfg["features"]]
                  if not Path(p).exists()]
@@ -434,7 +433,7 @@ model, scaler, background, feature_names = load_artefacts(disease, _version=2)
 st.subheader("Enter your health data")
 st.caption("Descriptions are shown beneath each field. Click any NHS link to learn more about a measurement you are unsure about or if you need more information.")
 
-# Initialise session state keys on first load
+# Initialise session state on first load
 if "form_submitted"    not in st.session_state:
     st.session_state.form_submitted    = False
 if "last_disease"      not in st.session_state:
@@ -444,16 +443,14 @@ if "submitted_values"  not in st.session_state:
 if "submitted_disease" not in st.session_state:
     st.session_state.submitted_disease = None
 
-# Clear results when the user switches between disease tabs
+# Clear results when the user switches disease tabs
 if st.session_state.last_disease != disease:
     st.session_state.last_disease   = disease
     st.session_state.form_submitted = False
 
-# For diabetes, the sex selector is rendered at full page width before the column
-# grid. This is the only reliable approach in Streamlit for dynamic show/hide,
-# because st.form defers all widget updates until submission and st.columns does
-# not reliably accept content added to a column object after it has been created.
-# The sex value is purely for UI control and is never passed to the model.
+# For diabetes, the sex selector is rendered at full width before the column grid.
+# st.form defers all widget updates until submission, so dynamic show/hide of
+# Pregnancies must live outside the form. The sex value is never passed to the model.
 show_pregnancies = True
 if disease == "Diabetes":
     st.caption("Your biological sex determines whether the Number of Pregnancies field appears below.")
@@ -493,8 +490,7 @@ if (st.session_state.form_submitted
     input_scaled     = scaler.transform(input_df)
 
     raw_prob = model.predict_proba(input_scaled)[0, 1]
-    # The heart disease dataset encodes target 1 = no disease, so the
-    # probability of class 1 is inverted to represent disease risk correctly.
+    # Heart disease dataset encodes target 1 = no disease, so probability is inverted
     prob = (1 - raw_prob) if disease == "Heart Disease" else raw_prob
     pct  = prob * 100
 
